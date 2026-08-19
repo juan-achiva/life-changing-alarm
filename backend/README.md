@@ -1,6 +1,6 @@
 # backend
 
-Firebase backend assets for `todaygrace`.
+Firebase backend assets for `life-changing-alarm`.
 
 ## Structure
 

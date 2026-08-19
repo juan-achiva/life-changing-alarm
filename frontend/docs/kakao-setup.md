@@ -6,7 +6,7 @@
 2. `Kakao Login`을 `ON`으로 켠다.
 3. Redirect URI에 아래 주소를 등록한다.
 
-`https://todaygrace-juan.web.app/kakao-bridge.html`
+`https://life-changing-alarm-juan.web.app/kakao-bridge.html`
 
 ## 2. 동의항목 설정
 
@@ -30,7 +30,7 @@
 
 ```env
 EXPO_PUBLIC_KAKAO_REST_API_KEY=여기에_REST_API_KEY
-EXPO_PUBLIC_KAKAO_REDIRECT_BRIDGE_URI=https://todaygrace-juan.web.app/kakao-bridge.html
+EXPO_PUBLIC_KAKAO_REDIRECT_BRIDGE_URI=https://life-changing-alarm-juan.web.app/kakao-bridge.html
 ```
 
 ## 5. Functions 시크릿 반영

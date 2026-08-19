@@ -9,7 +9,7 @@
 Firebase 콘솔에서 새 프로젝트를 생성합니다.
 
 현재 연결된 독립 프로젝트:
-- `todaygrace-juan`
+- `life-changing-alarm-juan`
 
 ## 2. 필요한 서비스 켜기
 

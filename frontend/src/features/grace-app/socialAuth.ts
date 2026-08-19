@@ -6,7 +6,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 const kakaoRestApiKey = process.env.EXPO_PUBLIC_KAKAO_REST_API_KEY;
 const kakaoRedirectBridgeUri =
-  process.env.EXPO_PUBLIC_KAKAO_REDIRECT_BRIDGE_URI || "https://todaygrace-juan.web.app/kakao-bridge.html";
+  process.env.EXPO_PUBLIC_KAKAO_REDIRECT_BRIDGE_URI || "https://life-changing-alarm-juan.web.app/kakao-bridge.html";
 
 export const kakaoAppRedirectUri = AuthSession.makeRedirectUri({
   scheme: "graceonecut",

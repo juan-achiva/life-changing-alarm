@@ -9,8 +9,8 @@ admin.initializeApp();
 const kakaoRestApiKey = defineSecret("KAKAO_REST_API_KEY");
 const kakaoClientSecret = defineSecret("KAKAO_CLIENT_SECRET");
 
-const KAKAO_REDIRECT_URI = "https://todaygrace-juan.web.app/kakao-bridge.html";
-const APPLE_AUDIENCES = ["com.graceonecut.app", "host.exp.Exponent"];
+const KAKAO_REDIRECT_URI = "https://life-changing-alarm-juan.web.app/kakao-bridge.html";
+const APPLE_AUDIENCES = ["com.juanachiva.lifechangingalarm", "host.exp.Exponent"];
 const PRAYER_SCHEDULE_TIME_ZONE = "Asia/Seoul";
 const PRAYER_ANCHOR_DAY_NUMBER = Math.floor(Date.UTC(2026, 0, 1) / (24 * 60 * 60 * 1000));
 
@@ -183,7 +183,7 @@ exports.notifyGroupPostCreated = onDocumentCreated(
     const messages = Array.from(targetTokens).map((token) => ({
       to: token,
       sound: "default",
-      title: "오늘 은혜",
+      title: "알람으로 인생바꾸기",
       body: `${post.authorName}님이 오늘의 은혜를 공유했습니다.`,
       data: {
         type: "group-post",
