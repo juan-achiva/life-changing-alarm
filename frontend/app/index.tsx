@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as AppleAuthentication from "expo-apple-authentication";
 import * as Clipboard from "expo-clipboard";
 import { CameraView, useCameraPermissions, type CameraType } from "expo-camera";
 import { Image } from "expo-image";
@@ -41,12 +40,9 @@ import {
   updateGroupSubscriptionTier,
   updateNotificationSettings,
   upsertGroupPrayerRequest,
-  upsertSocialUser,
 } from "@/src/features/grace-app/community";
 import {
   deleteFirebaseAccountSession,
-  signInWithAppleCustomToken,
-  signInWithKakaoCustomToken,
   signOutFirebaseSession,
 } from "@/src/features/grace-app/firebaseAuth";
 import {
@@ -86,12 +82,7 @@ import {
   restoreGrowthPlan,
   type GroupUpgradeState,
 } from "@/src/features/grace-app/revenuecat";
-import {
-  isAppleLoginAvailable,
-  signInWithApple,
-  signInWithKakao,
-} from "@/src/features/grace-app/socialAuth";
-import { clearStoredSession, loadStoredSessionUserId, persistSessionUserId } from "@/src/features/grace-app/session";
+import { clearStoredSession, loadStoredSessionUserId } from "@/src/features/grace-app/session";
 import { theme } from "@/src/features/grace-app/theme";
 import {
   defaultNotificationSettings,
@@ -121,6 +112,7 @@ const tabs: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap }
 
 const REVEAL_HINT_STORAGE_KEY = "today_grace_reveal_hint_seen_v1";
 const APPLE_STANDARD_EULA_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const LOCAL_GUEST_MODE = true;
 
 function getUpgradeServicePeriodLabel(periodLabel: string | null | undefined) {
   switch (periodLabel) {
@@ -152,8 +144,7 @@ function getUpgradeServiceDescription(periodLabel: string | null | undefined) {
 
 export default function Index() {
   const [booting, setBooting] = useState(true);
-  const [appleAvailable, setAppleAvailable] = useState(false);
-  const [authBusy, setAuthBusy] = useState<"apple" | "kakao" | null>(null);
+  const authBusy = null;
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [currentGroup, setCurrentGroup] = useState<GroupSummary | null>(null);
@@ -328,12 +319,6 @@ export default function Index() {
   );
 
   useEffect(() => {
-    isAppleLoginAvailable()
-      .then(setAppleAvailable)
-      .catch(() => setAppleAvailable(false));
-  }, []);
-
-  useEffect(() => {
     let active = true;
 
     AsyncStorage.getItem(REVEAL_HINT_STORAGE_KEY)
@@ -374,6 +359,14 @@ export default function Index() {
   }, [activeTab]);
 
   useEffect(() => {
+    if (LOCAL_GUEST_MODE) {
+      setCurrentUser(demoUserProfile);
+      setCurrentGroup(demoGroup);
+      setPosts(demoPostsByGroup);
+      setBooting(false);
+      return;
+    }
+
     if (!isFirebaseConfigured) {
       setCurrentUser(demoUserProfile);
       setCurrentGroup(demoGroup);
@@ -407,7 +400,11 @@ export default function Index() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !sessionUserId) {
+    if (LOCAL_GUEST_MODE || !isFirebaseConfigured) {
+      return;
+    }
+
+    if (!sessionUserId) {
       setCurrentUser(null);
       return;
     }
@@ -426,7 +423,11 @@ export default function Index() {
   }, [sessionUserId]);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !currentUser?.groupId) {
+    if (LOCAL_GUEST_MODE || !isFirebaseConfigured) {
+      return;
+    }
+
+    if (!currentUser?.groupId) {
       setCurrentGroup(null);
       setPosts([]);
       return;
@@ -442,7 +443,7 @@ export default function Index() {
   }, [currentUser?.groupId]);
 
   useEffect(() => {
-    if (!currentUser?.groupId) {
+    if (LOCAL_GUEST_MODE || !isFirebaseConfigured || !currentUser?.groupId) {
       return;
     }
 
@@ -731,56 +732,6 @@ export default function Index() {
       Alert.alert("동의 저장 실패", error instanceof Error ? error.message : "다시 시도해 주세요.");
     } finally {
       setLegalConsentSaving(false);
-    }
-  };
-
-  const handleAppleLogin = async () => {
-    try {
-      setAuthBusy("apple");
-      const appleResult = await signInWithApple();
-      const identity = await signInWithAppleCustomToken(appleResult);
-      const firebaseUid = auth?.currentUser?.uid;
-      if (!firebaseUid) {
-        throw new Error("Firebase 로그인 세션을 만들지 못했어요.");
-      }
-      const { user, needsLegalConsent } = await upsertSocialUser(firebaseUid, identity);
-      await persistSessionUserId(user.id);
-      setSessionUserId(user.id);
-      setCurrentUser(user);
-      if (needsLegalConsent || user.legalConsentVersion !== LEGAL_CONSENT_VERSION || !user.legalConsentAcceptedAtMs) {
-        resetLegalConsentDraft();
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("canceled")) {
-        return;
-      }
-
-      Alert.alert("Apple 로그인 실패", error instanceof Error ? error.message : "다시 시도해 주세요.");
-    } finally {
-      setAuthBusy(null);
-    }
-  };
-
-  const handleKakaoLogin = async () => {
-    try {
-      setAuthBusy("kakao");
-      const kakaoResult = await signInWithKakao();
-      const identity = await signInWithKakaoCustomToken(kakaoResult.authorizationCode);
-      const firebaseUid = auth?.currentUser?.uid;
-      if (!firebaseUid) {
-        throw new Error("Firebase 로그인 세션을 만들지 못했어요.");
-      }
-      const { user, needsLegalConsent } = await upsertSocialUser(firebaseUid, identity);
-      await persistSessionUserId(user.id);
-      setSessionUserId(user.id);
-      setCurrentUser(user);
-      if (needsLegalConsent || user.legalConsentVersion !== LEGAL_CONSENT_VERSION || !user.legalConsentAcceptedAtMs) {
-        resetLegalConsentDraft();
-      }
-    } catch (error) {
-      Alert.alert("Kakao 로그인 실패", error instanceof Error ? error.message : "다시 시도해 주세요.");
-    } finally {
-      setAuthBusy(null);
     }
   };
 
@@ -1556,63 +1507,7 @@ export default function Index() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <AppBackground />
-        <ScrollView contentContainerStyle={styles.onboardingScroll}>
-          <View style={styles.heroPanel}>
-            <Text style={styles.eyebrow}>교회 사진 공동체</Text>
-            <Text style={styles.heroTitle}>오늘 은혜</Text>
-            <Text style={styles.heroSubtitle}>
-              오늘 받은 은혜를
-              {"\n"}
-              사진과 말씀으로 함께 나눠요
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>소셜 로그인으로 시작</Text>
-            <Text style={styles.sectionDescription}>
-              로그인하고
-              {"\n"}
-              우리 공동체에 바로 들어와 보세요.
-            </Text>
-
-            {appleAvailable ? (
-              <View>
-                <AppleAuthentication.AppleAuthenticationButton
-                  buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-                  cornerRadius={16}
-                  style={styles.appleButton}
-                  onPress={handleAppleLogin}
-                />
-              </View>
-            ) : (
-              <View style={styles.unavailableCard}>
-                <Ionicons name="logo-apple" size={18} color={theme.colors.textSecondary} />
-                <Text style={styles.unavailableText}>Apple 로그인은 iPhone에서 사용할 수 있어요.</Text>
-              </View>
-            )}
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.kakaoButton,
-                authBusy === "kakao" || pressed ? styles.kakaoButtonPressed : null,
-              ]}
-              onPress={handleKakaoLogin}
-            >
-              <Ionicons name="chatbubble-ellipses" size={18} color="#3C2A00" />
-              <Text style={styles.kakaoButtonLabel}>
-                {authBusy === "kakao" ? "Kakao 로그인 중..." : "카카오로 시작하기"}
-              </Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-
-        {authBusy ? (
-          <BrandSplash
-            copy={authBusy === "apple" ? "Apple로 오늘 은혜에 들어가는 중이에요" : "카카오로 오늘 은혜에 들어가는 중이에요"}
-            overlay
-          />
-        ) : null}
+        <BrandSplash copy="로컬 게스트 모드를 준비하고 있어요" />
       </SafeAreaView>
     );
   }

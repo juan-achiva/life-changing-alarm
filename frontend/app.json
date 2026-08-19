@@ -15,7 +15,6 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.juanachiva.lifechangingalarm",
       "buildNumber": "1",
-      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -52,7 +51,6 @@
         }
       ],
       "expo-notifications",
-      "expo-apple-authentication",
       "expo-router",
       [
         "expo-splash-screen",
