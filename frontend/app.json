@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "알람으로 인생바꾸기",
+    "name": "OUT - 알람으로 인생바꾸기",
     "slug": "life-changing-alarm",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -40,14 +40,14 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "게시글 사진 촬영을 위해 카메라 접근 권한이 필요합니다."
+          "cameraPermission": "외출 인증 사진 촬영을 위해 카메라 접근 권한이 필요합니다."
         }
       ],
       [
         "expo-image-picker",
         {
-          "cameraPermission": "게시글 사진 첨부를 위해 카메라 접근 권한이 필요합니다.",
-          "photosPermission": "게시글 사진 첨부를 위해 사진첩 접근 권한이 필요합니다."
+          "cameraPermission": "외출 인증 사진 촬영을 위해 카메라 접근 권한이 필요합니다.",
+          "photosPermission": "외출 기록 사진을 선택하기 위해 사진첩 접근 권한이 필요합니다."
         }
       ],
       "expo-notifications",
