@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentUserExists() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function currentGroupId() {
+      return currentUserExists() ? currentUserData().groupId : null;
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function inMyGroup(groupId) {
+      return currentUserExists() && currentGroupId() == groupId;
+    }
+
+    function amGroupOwner(groupId) {
+      return signedIn()
+        && groupId != null
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUserId == request.auth.uid;
+    }
+
+    function ownerCanManageMember(userId) {
+      return signedIn()
+        && !isSelf(userId)
+        && resource.data.groupId != null
+        && currentGroupId() == resource.data.groupId
+        && amGroupOwner(resource.data.groupId)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["role", "groupName", "updatedAt"])
+        && request.resource.data.provider == resource.data.provider
+        && request.resource.data.providerUserId == resource.data.providerUserId
+        && request.resource.data.socialKey == resource.data.socialKey
+        && request.resource.data.displayName == resource.data.displayName
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.notificationSettings == resource.data.notificationSettings
+        && request.resource.data.pushTokens == resource.data.pushTokens
+        && request.resource.data.blockedUserIds == resource.data.blockedUserIds
+        && request.resource.data.legacyUserId == resource.data.legacyUserId
+        && request.resource.data.legalConsentVersion == resource.data.legalConsentVersion
+        && request.resource.data.legalConsentAcceptedAtMs == resource.data.legalConsentAcceptedAtMs;
+    }
+
+    match /users/{userId} {
+      allow create: if isSelf(userId);
+      allow read: if isSelf(userId);
+      allow update: if isSelf(userId) || ownerCanManageMember(userId);
+      allow delete: if isSelf(userId);
+    }
+
+    match /groups/{groupId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerUserId == request.auth.uid
+        && request.resource.data.memberCount == 1
+        && request.resource.data.maxMembers == 7;
+      allow read: if signedIn() && (inMyGroup(groupId) || currentGroupId() == null);
+      allow update: if signedIn() && (inMyGroup(groupId) || currentGroupId() == null);
+      allow delete: if signedIn()
+        && inMyGroup(groupId)
+        && resource.data.ownerUserId == request.auth.uid;
+    }
+
+    match /gracePosts/{postId} {
+      allow read: if signedIn()
+        && (inMyGroup(resource.data.groupId) || resource.data.authorId == request.auth.uid);
+      allow create: if signedIn()
+        && currentUserExists()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.groupId == currentGroupId();
+      allow delete: if signedIn()
+        && resource.data.authorId == request.auth.uid;
+      allow update: if false;
+    }
+  }
+}

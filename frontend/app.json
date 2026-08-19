@@ -1,0 +1,80 @@
+{
+  "expo": {
+    "name": "오늘 은혜",
+    "owner": "achivakr",
+    "slug": "grace-onecut",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/logo.png",
+    "scheme": "graceonecut",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b3a82105-fa0a-462e-9d69-e4d127f4e958"
+      }
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.graceonecut.app",
+      "buildNumber": "1",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.graceonecut.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "게시글 사진 촬영을 위해 카메라 접근 권한이 필요합니다."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "게시글 사진 첨부를 위해 카메라 접근 권한이 필요합니다.",
+          "photosPermission": "게시글 사진 첨부를 위해 사진첩 접근 권한이 필요합니다."
+        }
+      ],
+      "expo-notifications",
+      "expo-apple-authentication",
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 340,
+          "resizeMode": "contain",
+          "backgroundColor": "#F7E8EB",
+          "dark": {
+            "backgroundColor": "#F7E8EB"
+          }
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
