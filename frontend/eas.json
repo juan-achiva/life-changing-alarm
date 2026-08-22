@@ -19,14 +19,10 @@
     }
   },
   "submit": {
-      "production": {
-        "android": {
-        "track": "production",
-        "releaseStatus": "draft"
-        },
-        "ios": {
-          "ascAppId": "6762182864"
-        }
+    "production": {
+      "ios": {
+        "ascAppId": "6803942086"
+      }
     }
   }
 }

@@ -4,45 +4,52 @@
     "slug": "life-changing-alarm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/images/icon.png",
     "scheme": "lifechangingalarm",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "c7fb8069-f52d-454e-98a8-1486e8076705"
+      }
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.juanachiva.lifechangingalarm",
       "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAlarmKitUsageDescription": "설정한 기상 및 목표 출발 시각에 앱이 닫혀 있어도 알람을 울리기 위해 필요합니다."
       }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png"
+        "backgroundColor": "#D9FF43",
+        "foregroundImage": "./assets/images/icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.juanachiva.lifechangingalarm",
       "versionCode": 1,
       "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.WAKE_LOCK",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
+      "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "외출 인증 사진 촬영을 위해 카메라 접근 권한이 필요합니다."
-        }
-      ],
       [
         "expo-image-picker",
         {
@@ -50,26 +57,43 @@
           "photosPermission": "외출 기록 사진을 선택하기 위해 사진첩 접근 권한이 필요합니다."
         }
       ],
-      "expo-notifications",
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false,
+          "microphonePermission": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "wake-alarm-v3",
+          "sounds": [
+            "./assets/alarm-tone.wav"
+          ]
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 340,
+          "image": "./assets/images/icon.png",
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#F7E8EB",
+          "backgroundColor": "#F4F1E8",
           "dark": {
-            "backgroundColor": "#F7E8EB"
+            "backgroundColor": "#111111"
           }
         }
       ],
-      "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "owner": "juankimkim"
   }
 }
