@@ -1,87 +1,58 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    function currentUserExists() {
-      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function currentUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function currentGroupId() {
-      return currentUserExists() ? currentUserData().groupId : null;
-    }
-
-    function isSelf(userId) {
-      return signedIn() && request.auth.uid == userId;
-    }
-
-    function inMyGroup(groupId) {
-      return currentUserExists() && currentGroupId() == groupId;
-    }
-
-    function amGroupOwner(groupId) {
-      return signedIn()
-        && groupId != null
-        && exists(/databases/$(database)/documents/groups/$(groupId))
-        && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUserId == request.auth.uid;
-    }
-
-    function ownerCanManageMember(userId) {
-      return signedIn()
-        && !isSelf(userId)
-        && resource.data.groupId != null
-        && currentGroupId() == resource.data.groupId
-        && amGroupOwner(resource.data.groupId)
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["role", "groupName", "updatedAt"])
-        && request.resource.data.provider == resource.data.provider
-        && request.resource.data.providerUserId == resource.data.providerUserId
-        && request.resource.data.socialKey == resource.data.socialKey
-        && request.resource.data.displayName == resource.data.displayName
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.groupId == resource.data.groupId
-        && request.resource.data.notificationSettings == resource.data.notificationSettings
-        && request.resource.data.pushTokens == resource.data.pushTokens
-        && request.resource.data.blockedUserIds == resource.data.blockedUserIds
-        && request.resource.data.legacyUserId == resource.data.legacyUserId
-        && request.resource.data.legalConsentVersion == resource.data.legalConsentVersion
-        && request.resource.data.legalConsentAcceptedAtMs == resource.data.legalConsentAcceptedAtMs;
-    }
-
+    function signedIn() { return request.auth != null; }
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function myGroupId() { return exists(userPath()) ? get(userPath()).data.groupId : null; }
     match /users/{userId} {
-      allow create: if isSelf(userId);
-      allow read: if isSelf(userId);
-      allow update: if isSelf(userId) || ownerCanManageMember(userId);
-      allow delete: if isSelf(userId);
+      allow create, read, update, delete: if signedIn() && request.auth.uid == userId;
     }
 
     match /groups/{groupId} {
       allow create: if signedIn()
         && request.resource.data.ownerUserId == request.auth.uid
         && request.resource.data.memberCount == 1
+        && request.resource.data.memberUserIds == [request.auth.uid]
         && request.resource.data.maxMembers == 7;
-      allow read: if signedIn() && (inMyGroup(groupId) || currentGroupId() == null);
-      allow update: if signedIn() && (inMyGroup(groupId) || currentGroupId() == null);
-      allow delete: if signedIn()
-        && inMyGroup(groupId)
-        && resource.data.ownerUserId == request.auth.uid;
+
+      // Temporary compatibility with the previous shipped client.
+      allow read: if signedIn();
+
+      allow update: if signedIn()
+        && (myGroupId() == groupId || myGroupId() == null)
+        && request.resource.data.inviteCode == resource.data.inviteCode
+        && request.resource.data.maxMembers == resource.data.maxMembers
+        && request.resource.data.memberUserIds.size() == request.resource.data.memberCount
+        && request.resource.data.memberProfiles.size() == request.resource.data.memberCount
+        && request.resource.data.memberNames.size() == request.resource.data.memberCount
+        && request.resource.data.memberUserIds.hasAny([request.resource.data.ownerUserId])
+        && request.resource.data.memberCount >= 0
+        && request.resource.data.memberCount <= resource.data.maxMembers
+        && (
+          request.resource.data.ownerUserId == resource.data.ownerUserId
+          || (
+            resource.data.ownerUserId == request.auth.uid
+            && request.resource.data.ownerUserId != request.auth.uid
+            && request.resource.data.memberCount == resource.data.memberCount - 1
+            && request.resource.data.memberCount > 0
+          )
+        );
+
+      allow delete: if signedIn() && resource.data.ownerUserId == request.auth.uid;
+
+      match /posts/{postId} {
+        allow read: if signedIn() && myGroupId() == groupId;
+        allow create: if signedIn() && myGroupId() == groupId
+          && request.resource.data.groupId == groupId
+          && request.resource.data.authorUserId == request.auth.uid;
+        allow update, delete: if signedIn() && resource.data.authorUserId == request.auth.uid;
+      }
     }
 
-    match /gracePosts/{postId} {
-      allow read: if signedIn()
-        && (inMyGroup(resource.data.groupId) || resource.data.authorId == request.auth.uid);
-      allow create: if signedIn()
-        && currentUserExists()
-        && request.resource.data.authorId == request.auth.uid
-        && request.resource.data.groupId == currentGroupId();
-      allow delete: if signedIn()
-        && resource.data.authorId == request.auth.uid;
-      allow update: if false;
+    match /reports/{reportId} {
+      allow create: if signedIn() && request.resource.data.reporterUserId == request.auth.uid;
+      allow read, update, delete: if false;
     }
   }
 }

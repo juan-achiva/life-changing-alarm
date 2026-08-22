@@ -1,20 +1,11 @@
 {
-  "functions": {
-    "source": "functions"
+  "auth": {
+    "providers": {
+      "anonymous": true
+    }
   },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  },
-  "hosting": {
-    "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ]
   }
 }

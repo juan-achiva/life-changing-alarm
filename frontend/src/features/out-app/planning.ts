@@ -26,6 +26,29 @@ export function buildMorningPlan(input: {
   return { id: `plan-${Date.now()}`, eventTitle: input.eventTitle.trim() || "MORNING SCHEDULE", eventTime: input.eventTime, travelMinutes: input.travelMinutes, prepMinutes: input.prepMinutes, wakeAt, targetOutAt, adjustmentMinutes };
 }
 
+export function buildWakeAlarmPlan(input: {
+  label: string;
+  wakeTime: string;
+  outTime: string;
+  repeatDays?: number[];
+}): MorningPlan {
+  const wakeAt = nextTimestamp(input.wakeTime);
+  let targetOutAt = timestampOnSameDay(input.outTime, wakeAt);
+  if (targetOutAt <= wakeAt) targetOutAt += DAY;
+  const prepMinutes = Math.max(1, Math.round((targetOutAt - wakeAt) / MINUTE));
+  return {
+    id: `alarm-${Date.now()}`,
+    eventTitle: input.label.trim() || "기상 알람",
+    eventTime: input.wakeTime,
+    travelMinutes: 0,
+    prepMinutes,
+    wakeAt,
+    targetOutAt,
+    adjustmentMinutes: 0,
+    repeatDays: input.repeatDays ?? [],
+  };
+}
+
 export function getCoachMessage(remainingSeconds: number) {
   if (remainingSeconds <= 0) return "OUT time passed. Grab the essentials and leave now.";
   if (remainingSeconds <= 5 * 60) return "Shoes, keys, phone. It is time to move.";
@@ -48,4 +71,21 @@ export function formatDuration(totalSeconds: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function nextTimestamp(time: string) {
+  const [hour, minute] = time.split(":").map(Number);
+  const now = new Date();
+  if (now.getHours() === hour && now.getMinutes() === minute) return Date.now() + 1_500;
+  const date = new Date(now);
+  date.setHours(hour, minute, 0, 0);
+  if (date.getTime() <= Date.now()) date.setTime(date.getTime() + DAY);
+  return date.getTime();
+}
+
+function timestampOnSameDay(time: string, reference: number) {
+  const [hour, minute] = time.split(":").map(Number);
+  const date = new Date(reference);
+  date.setHours(hour, minute, 0, 0);
+  return date.getTime();
 }

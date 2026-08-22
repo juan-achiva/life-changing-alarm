@@ -1,8 +1,7 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FirebaseAuth from "@firebase/auth";
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getFunctions } from "firebase/functions";
-import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -21,8 +20,20 @@ const app = isFirebaseConfigured
     : initializeApp(firebaseConfig)
   : null;
 
-export const auth = app ? getAuth(app) : null;
+export const auth = app ? createPersistentAuth() : null;
 
 export const db = app ? getFirestore(app) : null;
-export const functions = app ? getFunctions(app, "us-central1") : null;
-export const storage = app ? getStorage(app) : null;
+
+function createPersistentAuth() {
+  const getReactNativePersistence = (FirebaseAuth as typeof FirebaseAuth & { getReactNativePersistence: (storage: typeof AsyncStorage) => FirebaseAuth.Persistence }).getReactNativePersistence;
+  try {
+    if (typeof getReactNativePersistence !== "function") return FirebaseAuth.getAuth(app!);
+    return FirebaseAuth.initializeAuth(app!, { persistence: getReactNativePersistence(AsyncStorage) });
+  } catch (error) {
+    if ((error as { code?: string }).code === "auth/already-initialized") return FirebaseAuth.getAuth(app!);
+    // A persistence adapter failure must not crash the native app at launch.
+    // Auth still works for the current session with Firebase's default setup.
+    console.warn("Persistent Firebase Auth unavailable; using default Auth.", error);
+    return FirebaseAuth.getAuth(app!);
+  }
+}
