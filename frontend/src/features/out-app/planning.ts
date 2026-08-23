@@ -2,6 +2,7 @@ import type { MorningPlan, WakeToOutRecord } from "./types";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
+const LAST_CALL_LEAD = 10 * MINUTE;
 
 export function buildMorningPlan(input: {
   eventTitle: string;
@@ -23,7 +24,7 @@ export function buildMorningPlan(input: {
   const targetOutAt = eventAt.getTime() - input.travelMinutes * MINUTE;
   const wakeAt = targetOutAt - (input.prepMinutes + adjustmentMinutes) * MINUTE;
 
-  return { id: `plan-${Date.now()}`, eventTitle: input.eventTitle.trim() || "MORNING SCHEDULE", eventTime: input.eventTime, travelMinutes: input.travelMinutes, prepMinutes: input.prepMinutes, wakeAt, targetOutAt, adjustmentMinutes };
+  return { id: `plan-${Date.now()}`, eventTitle: input.eventTitle.trim() || "MORNING SCHEDULE", eventTime: input.eventTime, travelMinutes: input.travelMinutes, prepMinutes: input.prepMinutes, wakeAt, lastCallAt: calculateLastCallAt(wakeAt, targetOutAt), targetOutAt, adjustmentMinutes };
 }
 
 export function buildWakeAlarmPlan(input: {
@@ -43,17 +44,31 @@ export function buildWakeAlarmPlan(input: {
     travelMinutes: 0,
     prepMinutes,
     wakeAt,
+    lastCallAt: calculateLastCallAt(wakeAt, targetOutAt),
     targetOutAt,
     adjustmentMinutes: 0,
     repeatDays: input.repeatDays ?? [],
   };
 }
 
+export function getLastCallAt(plan: Pick<MorningPlan, "wakeAt" | "lastCallAt" | "targetOutAt">) {
+  return plan.lastCallAt ?? calculateLastCallAt(plan.wakeAt, plan.targetOutAt);
+}
+
+function calculateLastCallAt(wakeAt: number, targetOutAt: number) {
+  const preferred = targetOutAt - LAST_CALL_LEAD;
+  if (preferred > wakeAt) return preferred;
+  return wakeAt + Math.max(1, Math.floor((targetOutAt - wakeAt) / 2 / MINUTE)) * MINUTE;
+}
+
 export function getCoachMessage(remainingSeconds: number) {
-  if (remainingSeconds <= 0) return "OUT time passed. Grab the essentials and leave now.";
-  if (remainingSeconds <= 5 * 60) return "Shoes, keys, phone. It is time to move.";
-  if (remainingSeconds <= 15 * 60) return "Start your final departure routine now.";
-  return "Stay on pace. I’ll tell you when it’s time to move.";
+  if (remainingSeconds <= 0) return "출발 시간이 지났습니다. 필수품만 챙기고 지금 나가세요.";
+  if (remainingSeconds <= 60) return "현관으로 이동하세요. 지금 신발을 신어야 합니다.";
+  if (remainingSeconds <= 3 * 60) return "휴대폰, 열쇠, 가방. 바로 나갈 준비를 하세요.";
+  if (remainingSeconds <= 5 * 60) return "5분도 남지 않았습니다. 준비를 끝내세요.";
+  if (remainingSeconds <= 10 * 60) return "LAST CALL. 최소 루틴만 끝내고 나가세요.";
+  if (remainingSeconds <= 15 * 60) return "이제 출발 준비를 마무리할 시간입니다.";
+  return "지금 페이스를 유지하세요. LAST CALL 전에 알려드릴게요.";
 }
 
 export function formatClock(timestamp: number) {

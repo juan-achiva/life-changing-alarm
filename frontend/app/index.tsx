@@ -5,11 +5,12 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, BackHandler, KeyboardAvoidingView, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, Vibration, View } from "react-native";
+import { Alert, AppState, BackHandler, KeyboardAvoidingView, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, Vibration, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { buildWakeAlarmPlan, formatClock, formatDuration, getCoachMessage } from "@/src/features/out-app/planning";
+import { buildWakeAlarmPlan, formatClock, formatDuration, getCoachMessage, getLastCallAt } from "@/src/features/out-app/planning";
 import { isValidTime, scheduleSnoozeNotification, scheduleWakeNotification } from "@/src/features/out-app/alarmNotifications";
+import { consumePendingNativeAlarm } from "@/src/features/out-app/nativeAlarm";
 import { getPostFeedback } from "@/src/features/out-app/aiFeedback";
 import { deleteGroupRecord, publishGroupRecord, reportGroupRecord, subscribeGroupFeed } from "@/src/features/out-app/feedSync";
 import { deleteAllUserData } from "@/src/features/out-app/accountData";
@@ -54,9 +55,12 @@ export default function OutApp() {
   const groupMemberName = group?.memberName;
 
   useEffect(() => {
-    Promise.all([loadOutState(), loadBlockedUsers()]).then(([state, blocked]) => {
+    Promise.all([loadOutState(), loadBlockedUsers()]).then(async ([state, blocked]) => {
+      const pendingAlarm = state.plan ? await consumePendingNativeAlarm(state.plan.id) : null;
+      const pendingWakeAt = pendingAlarm?.kind === "last-call" ? state.activeWakeAt ?? pendingAlarm.timestamp : pendingAlarm?.timestamp ?? null;
+      const restoredWakeAt = pendingWakeAt ?? state.activeWakeAt;
       const serverGroup = state.group && !state.group.id.startsWith("local-group-") && !state.group.id.startsWith("group-") ? state.group : null;
-      setPlan(state.plan); setHistory(state.history); setActiveWakeAt(state.activeWakeAt); setGroup(serverGroup); setCharacter(state.character); setCustomCharacter(state.customCharacter); setCharacterEnabled(state.characterEnabled);
+      setPlan(state.plan); setHistory(state.history); setActiveWakeAt(restoredWakeAt); setGroup(serverGroup); setCharacter(state.character); setCustomCharacter(state.customCharacter); setCharacterEnabled(state.characterEnabled);
       if (state.group && !serverGroup) void saveGroup(null);
       if (state.plan) {
         setEventTitle(state.plan.eventTitle);
@@ -64,10 +68,32 @@ export default function OutApp() {
         setOutTime(formatClock(state.plan.targetOutAt));
         setRepeatDays(state.plan.repeatDays ?? []);
       }
-      if (state.activeWakeAt) setPhase("timer");
+      if (restoredWakeAt) {
+        setNow(Date.now());
+        setPhase("timer");
+        if (pendingWakeAt) void Promise.all([saveActiveWake(pendingWakeAt), startStopwatchSurface(pendingWakeAt, state.plan?.targetOutAt ?? pendingWakeAt)]);
+      }
       setBlockedUsers(blocked);
     }).finally(() => setBooting(false));
   }, []);
+
+  useEffect(() => {
+    if (!plan) return;
+    const restorePendingWake = async () => {
+      const pendingAlarm = await consumePendingNativeAlarm(plan.id);
+      if (!pendingAlarm) return;
+      const wakeAt = pendingAlarm.kind === "last-call" ? activeWakeAt ?? pendingAlarm.timestamp : pendingAlarm.timestamp;
+      setActiveWakeAt(wakeAt);
+      setNow(Date.now());
+      setPhase("timer");
+      await Promise.all([saveActiveWake(wakeAt), startStopwatchSurface(wakeAt, plan.targetOutAt)]);
+    };
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void restorePendingWake();
+    });
+    void restorePendingWake();
+    return () => subscription.remove();
+  }, [plan, activeWakeAt]);
 
   useEffect(() => {
     if (phase !== "timer") return;
@@ -76,17 +102,18 @@ export default function OutApp() {
   }, [phase]);
 
   useEffect(() => {
-    const notificationPhase = (data: Record<string, unknown>): AppPhase | null => data.kind === "out-alarm" ? "outAlarm" : data.kind === "wake-alarm" ? "alarm" : null;
+    const notificationPhase = (data: Record<string, unknown>): AppPhase | null => data.kind === "last-call" ? "outAlarm" : data.kind === "wake-alarm" ? "alarm" : null;
     const received = Notifications.addNotificationReceivedListener((notification) => {
       const next = notificationPhase(notification.request.content.data); if (plan && next) setPhase(next);
     });
     const responded = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
       if (data.kind === "group-post") { setPhase("tomorrow"); setTab("feed"); return; }
+      if (data.kind === "departure-nudge") { setPhase(activeWakeAt ? "timer" : "outAlarm"); return; }
       const next = notificationPhase(data); if (plan && next) setPhase(next);
     });
     return () => { received.remove(); responded.remove(); };
-  }, [plan]);
+  }, [plan, activeWakeAt]);
 
   useEffect(() => {
     if (!groupId || !groupMemberName || groupId.startsWith("local-group-") || groupId.startsWith("group-")) return;
@@ -155,6 +182,12 @@ export default function OutApp() {
     await Promise.all([saveActiveWake(wakeAt), startStopwatchSurface(wakeAt, plan?.targetOutAt ?? wakeAt)]);
   };
 
+  const stopLastCall = async () => {
+    const wakeAt = activeWakeAt ?? Date.now();
+    setActiveWakeAt(wakeAt); setNow(Date.now()); setPhase("timer");
+    await Promise.all([saveActiveWake(wakeAt), startStopwatchSurface(wakeAt, plan?.targetOutAt ?? wakeAt)]);
+  };
+
   const snoozeAlarm = async () => {
     Vibration.cancel();
     if (plan) await scheduleSnoozeNotification(plan, { soundEnabled, vibrationEnabled });
@@ -177,7 +210,7 @@ export default function OutApp() {
     const durationSeconds = Math.floor((outAt - activeWakeAt) / 1000);
     const deltaSeconds = Math.floor((plan.targetOutAt - outAt) / 1000);
     const recentComments = feedRecords.filter((item) => item.aiCharacter === character && item.aiComment).slice(0, 5).map((item) => item.aiComment!);
-    const record: WakeToOutRecord = { id: `record-${outAt}`, groupId: group.id, wakeAt: activeWakeAt, outAt, targetOutAt: plan.targetOutAt, durationSeconds, deltaSeconds, photoUri, authorName: group.memberName ?? "ME", aiCharacter: character, aiCharacterName: character === "custom" ? customCharacter.name : undefined };
+    const record: WakeToOutRecord = { id: `record-${outAt}`, groupId: group.id, wakeAt: activeWakeAt, outAt, targetOutAt: plan.targetOutAt, durationSeconds, deltaSeconds, photoUri, authorName: group.memberName ?? "ME", aiCharacter: character, aiCharacterName: character === "custom" ? customCharacter.name : undefined, departureMode: activeWakeAt >= getLastCallAt(plan) ? "last-call" : "ready" };
     const next = [record, ...history].slice(0, 30);
 
     // 촬영이 끝나는 순간 인증은 완료된 것으로 처리한다. 네트워크 작업 때문에
@@ -203,8 +236,8 @@ export default function OutApp() {
   if (!group) return <GroupGate onComplete={(next) => { setGroup(next); void saveGroup(next); }} />;
 
   if (phase === "alarm" && plan) return <SafeAreaView style={s.safe}><Alarm plan={plan} soundEnabled={soundEnabled} vibrationEnabled={vibrationEnabled} onStop={stopAlarm} onSnooze={snoozeAlarm} /></SafeAreaView>;
-  if (phase === "outAlarm" && plan) return <SafeAreaView style={s.safe}><OutDeadlineAlarm plan={plan} soundEnabled={soundEnabled} vibrationEnabled={vibrationEnabled} onDismiss={() => setPhase(activeWakeAt ? "timer" : "tomorrow")} /></SafeAreaView>;
-  if (phase === "timer" && plan) return <SafeAreaView style={s.safe}><Header label="MORNING" /><Timer elapsed={elapsedSeconds} remaining={remainingSeconds} plan={plan} onOut={() => void finishOut(true)} onSkip={() => void finishOut(false)} /></SafeAreaView>;
+  if (phase === "outAlarm" && plan) return <SafeAreaView style={s.safe}><OutDeadlineAlarm plan={plan} soundEnabled={soundEnabled} vibrationEnabled={vibrationEnabled} onDismiss={() => void stopLastCall()} /></SafeAreaView>;
+  if (phase === "timer" && plan) return <SafeAreaView style={s.safe}><Header label={now >= getLastCallAt(plan) ? "LAST CALL" : "MORNING"} /><Timer elapsed={elapsedSeconds} remaining={remainingSeconds} emergency={now >= getLastCallAt(plan)} plan={plan} onOut={() => void finishOut(true)} onSkip={() => void finishOut(false)} /></SafeAreaView>;
   if (phase === "result" && lastRecord) return <SafeAreaView style={s.safe}><Header label="SHARED TO GROUP" /><Result record={lastRecord} previous={history[1] ?? null} comparison={comparison} onDone={() => { setPhase("tomorrow"); setTab("feed"); }} /></SafeAreaView>;
 
   return (
@@ -250,7 +283,7 @@ function Feed({ group, history, alarm, onPostAction }: { group: GroupProfile; hi
 function ProofPost({ record, onMenu }: { record: WakeToOutRecord; onMenu: () => void }) {
   const character = CHARACTERS.find((item) => item.id === record.aiCharacter) ?? CHARACTERS[0];
   const characterName = record.aiCharacter === "custom" ? record.aiCharacterName ?? "MY VOICE" : character.name;
-  return <View style={s.post}><View style={s.postHeader}><View style={s.avatar}><Text style={s.avatarText}>{(record.authorName ?? "ME").slice(0, 1)}</Text></View><View><Text style={s.postAuthor}>{record.authorName ?? "ME"}</Text><Text style={s.postMeta}>{formatClock(record.outAt)} · OUT</Text></View><Text style={s.postDelta}>{record.deltaSeconds >= 0 ? `${Math.ceil(record.deltaSeconds / 60)}M EARLY` : `${Math.ceil(-record.deltaSeconds / 60)}M LATE`}</Text><Pressable accessibilityLabel="게시물 메뉴" onPress={onMenu} hitSlop={12} style={s.postMenu}><Ionicons name="ellipsis-horizontal" size={20} color={C.muted} /></Pressable></View><View style={s.postPhoto}>{record.photoUri ? <Image source={{ uri: record.photoUri }} contentFit="cover" style={StyleSheet.absoluteFill} /> : <View style={[StyleSheet.absoluteFill, s.placeholder]} />}<View style={s.shade} /><View style={s.overlay}><Text style={s.proofBrand}>OUT.</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55} style={s.proofTime}>{formatDuration(record.durationSeconds)}</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={s.proofDuration}>{formatClock(record.wakeAt)} WAKE → {formatClock(record.outAt)} OUT</Text></View></View>{record.aiComment ? <View style={s.aiComment}><View style={[s.characterFace, { backgroundColor: character.color }]}><Text style={s.characterEmoji}>{character.emoji}</Text></View><View style={s.aiCommentBody}><Text style={s.aiCommentName}>{characterName}</Text><Text style={s.aiCommentText}>{record.aiComment}</Text></View></View> : null}</View>;
+  return <View style={s.post}><View style={s.postHeader}><View style={s.avatar}><Text style={s.avatarText}>{(record.authorName ?? "ME").slice(0, 1)}</Text></View><View><Text style={s.postAuthor}>{record.authorName ?? "ME"}</Text><Text style={s.postMeta}>{formatClock(record.outAt)} · {record.departureMode === "last-call" ? "LAST CALL OUT" : "READY OUT"}</Text></View><Text style={s.postDelta}>{record.deltaSeconds >= 0 ? `${Math.ceil(record.deltaSeconds / 60)}M EARLY` : `${Math.ceil(-record.deltaSeconds / 60)}M LATE`}</Text><Pressable accessibilityLabel="게시물 메뉴" onPress={onMenu} hitSlop={12} style={s.postMenu}><Ionicons name="ellipsis-horizontal" size={20} color={C.muted} /></Pressable></View><View style={s.postPhoto}>{record.photoUri ? <Image source={{ uri: record.photoUri }} contentFit="cover" style={StyleSheet.absoluteFill} /> : <View style={[StyleSheet.absoluteFill, s.placeholder]} />}<View style={s.shade} /><View style={s.overlay}><Text style={s.proofBrand}>OUT.</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55} style={s.proofTime}>{formatDuration(record.durationSeconds)}</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={s.proofDuration}>{formatClock(record.wakeAt)} WAKE → {formatClock(record.outAt)} OUT</Text></View></View>{record.aiComment ? <View style={s.aiComment}><View style={[s.characterFace, { backgroundColor: character.color }]}><Text style={s.characterEmoji}>{character.emoji}</Text></View><View style={s.aiCommentBody}><Text style={s.aiCommentName}>{characterName}</Text><Text style={s.aiCommentText}>{record.aiComment}</Text></View></View> : null}</View>;
 }
 
 function showPostActions(record: WakeToOutRecord, group: GroupProfile, setRecords: React.Dispatch<React.SetStateAction<WakeToOutRecord[]>>, blocked: string[], setBlocked: React.Dispatch<React.SetStateAction<string[]>>) {
@@ -307,7 +340,7 @@ function FeedAlarmCard(props: AlarmSetupProps) {
   const save = async () => { const saved = await props.onCalculate(); if (saved) setEditing(false); };
   return <View style={s.feedAlarm}>
     <View style={s.feedAlarmHeader}><View style={s.feedAlarmKicker}><View style={s.alarmGlyph}><Ionicons name="alarm" size={20} color={C.ink} /></View><View><Text style={s.feedAlarmKickerText}>NEXT WAKE</Text><Text style={s.feedAlarmDate}>{props.plan ? new Date(props.plan.wakeAt).toLocaleDateString("ko-KR", { weekday: "long", month: "short", day: "numeric" }) : "첫 알람을 설정하세요"}</Text></View></View><Pressable accessibilityLabel="알람 설정" onPress={() => setEditing(!editing)} style={s.feedAlarmEdit}><Ionicons name="settings-outline" size={21} color={C.white} /></Pressable></View>
-    {!editing ? <View style={s.alarmHero}><View style={s.alarmTimeRow}><Text style={s.alarmHeroTime}>{props.plan ? formatClock(props.plan.wakeAt) : props.values.wakeTime}</Text><Text style={s.alarmHeroWake}>WAKE</Text></View><View style={s.alarmOutRow}><View style={s.alarmNameBlock}><Text numberOfLines={1} ellipsizeMode="tail" style={s.alarmName}>{props.plan?.eventTitle ?? props.values.eventTitle}</Text>{props.plan?.repeatDays?.length ? <Text style={s.alarmRepeat}>{props.plan.repeatDays.map((day) => "일월화수목금토"[day]).join(" · ")}</Text> : null}</View><View style={s.alarmOutPill}><Ionicons name="exit-outline" size={14} color={C.acid} /><Text style={s.alarmOutPillText}>OUT {props.plan ? formatClock(props.plan.targetOutAt) : props.values.outTime}</Text></View></View></View> : null}
+    {!editing ? <View style={s.alarmHero}><View style={s.alarmTimeRow}><Text style={s.alarmHeroTime}>{props.plan ? formatClock(props.plan.wakeAt) : props.values.wakeTime}</Text><Text style={s.alarmHeroWake}>WAKE</Text></View>{props.plan ? <View style={s.lastCallStrip}><Text style={s.lastCallLabel}>LAST CALL</Text><Text style={s.lastCallTime}>{formatClock(getLastCallAt(props.plan))}</Text><Text style={s.lastCallArrow}>→</Text><Text style={s.lastCallOut}>OUT {formatClock(props.plan.targetOutAt)}</Text></View> : null}<View style={s.alarmOutRow}><View style={s.alarmNameBlock}><Text numberOfLines={1} ellipsizeMode="tail" style={s.alarmName}>{props.plan?.eventTitle ?? props.values.eventTitle}</Text>{props.plan?.repeatDays?.length ? <Text style={s.alarmRepeat}>{props.plan.repeatDays.map((day) => "일월화수목금토"[day]).join(" · ")}</Text> : null}</View><View style={s.alarmOutPill}><Ionicons name="notifications" size={14} color={C.acid} /><Text style={s.alarmOutPillText}>PUSH RUSH</Text></View></View></View> : null}
     <Modal visible={editing} animationType="slide" presentationStyle="fullScreen" statusBarTranslucent={false} onRequestClose={() => setEditing(false)}>
       <View style={s.alarmModal}>
         <View style={s.alarmModalHeader}><Pressable onPress={() => setEditing(false)} hitSlop={12}><Text style={s.alarmModalCancel}>취소</Text></Pressable><Text style={s.alarmModalTitle}>기상 알람</Text><Pressable onPress={() => void save()} hitSlop={12}><Text style={s.alarmModalSave}>저장</Text></Pressable></View>
@@ -388,18 +421,45 @@ function Alarm({ plan, soundEnabled, vibrationEnabled, onStop, onSnooze }: { pla
 
 function OutDeadlineAlarm({ plan, soundEnabled, vibrationEnabled, onDismiss }: { plan: MorningPlan; soundEnabled: boolean; vibrationEnabled: boolean; onDismiss: () => void }) {
   const player = useAudioPlayer(require("../assets/alarm-tone.wav"));
+  const [holdProgress, setHoldProgress] = useState(0);
+  const holdStartedAt = useRef<number | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdCompleted = useRef(false);
   useEffect(() => {
     let active = true; player.loop = true; player.volume = 1;
     void setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: false }).then(() => { if (active && soundEnabled) player.play(); });
     return () => { active = false; };
   }, [player, soundEnabled]);
   useEffect(() => { if (vibrationEnabled) Vibration.vibrate([0, 700, 250, 700], true); return () => Vibration.cancel(); }, [vibrationEnabled]);
-  const dismiss = () => { player.pause(); Vibration.cancel(); onDismiss(); };
-  return <View style={s.ringing}><View style={[s.ringingIcon, { backgroundColor: C.orange }]}><Ionicons name="exit-outline" size={34} color={C.white} /></View><Text style={s.ringingLabel}>목표 출발 시간</Text><Text style={s.ringingTime}>{formatClock(plan.targetOutAt)}</Text><Text style={s.ringingName}>OUT NOW</Text><Text style={s.ringingOut}>지금 집을 나갈 시간이에요.</Text><Pressable onPress={dismiss} style={[s.outDeadlineButton]}><Text style={s.stopCircleText}>확인하고 준비 계속하기</Text></Pressable></View>;
+  useEffect(() => () => { if (holdTimer.current) clearInterval(holdTimer.current); }, []);
+  const completeHold = () => {
+    holdCompleted.current = true;
+    if (holdTimer.current) clearInterval(holdTimer.current);
+    holdTimer.current = null;
+    setHoldProgress(1);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    player.pause(); Vibration.cancel(); onDismiss();
+  };
+  const beginHold = () => {
+    holdCompleted.current = false;
+    holdStartedAt.current = Date.now();
+    if (holdTimer.current) clearInterval(holdTimer.current);
+    holdTimer.current = setInterval(() => {
+      if (!holdStartedAt.current) return;
+      setHoldProgress(Math.min(0.99, (Date.now() - holdStartedAt.current) / 5_000));
+    }, 50);
+  };
+  const cancelHold = () => {
+    if (holdTimer.current) clearInterval(holdTimer.current);
+    holdTimer.current = null;
+    holdStartedAt.current = null;
+    if (!holdCompleted.current) setHoldProgress(0);
+  };
+  return <View style={s.ringing}><View style={[s.ringingIcon, { backgroundColor: C.orange }]}><Ionicons name="warning" size={34} color={C.white} /></View><Text style={s.ringingLabel}>LAST CALL</Text><Text style={s.ringingTime}>{formatClock(getLastCallAt(plan))}</Text><Text style={s.ringingName}>10 MIN TO OUT</Text><Text style={s.ringingOut}>최소 루틴만 끝내고 집을 나가세요.</Text><View style={s.emergencySteps}><Text style={s.emergencyStep}>세수</Text><Text style={s.emergencyStep}>옷</Text><Text style={s.emergencyStep}>가방</Text></View><Pressable accessibilityRole="button" accessibilityLabel="5초 동안 눌러 비상 루틴 시작" delayLongPress={5_000} onPressIn={beginHold} onPressOut={cancelHold} onLongPress={completeHold} style={s.holdButton}><View pointerEvents="none" style={[s.holdProgress, { width: `${holdProgress * 100}%` }]} /><View pointerEvents="none" style={s.holdContent}><Ionicons name="finger-print" size={24} color={C.white} /><Text style={s.holdText}>{holdProgress > 0 ? `${Math.ceil((1 - holdProgress) * 5)}초 더 누르기` : "5초 동안 눌러 시작"}</Text></View></Pressable><Text style={s.holdHint}>중간에 손을 떼면 처음부터 다시 시작합니다.</Text></View>;
 }
 
-function Timer({ elapsed, remaining, plan, onOut, onSkip }: { elapsed: number; remaining: number; plan: MorningPlan; onOut: () => void; onSkip: () => void }) {
-  return <View style={s.timer}><Text style={s.timerLabel}>SINCE WAKE</Text><Text style={s.timerValue}>{formatDuration(elapsed)}</Text><View style={[s.countdown, remaining <= 300 && s.urgent]}><Text style={s.countdownLabel}>UNTIL OUT</Text><Text style={s.countdownValue}>{remaining >= 0 ? formatDuration(remaining) : `+${formatDuration(-remaining)}`}</Text><Text style={s.coach}>{getCoachMessage(remaining)}</Text></View><View style={s.timeline}><Text style={s.timelineText}>WAKE {formatClock(Date.now() - elapsed * 1000)}</Text><View style={s.timelineLine} /><Text style={s.timelineText}>OUT {formatClock(plan.targetOutAt)}</Text></View><Pressable onPress={onOut} style={({ pressed }) => [s.out, pressed && s.pressed]}><Ionicons name="camera" size={28} /><Text style={s.outText}>I&apos;M OUT</Text></Pressable><Pressable onPress={onSkip} style={s.skip}><Text style={s.skipText}>OUT WITHOUT PHOTO</Text></Pressable></View>;
+function Timer({ elapsed, remaining, emergency, plan, onOut, onSkip }: { elapsed: number; remaining: number; emergency: boolean; plan: MorningPlan; onOut: () => void; onSkip: () => void }) {
+  return <View style={[s.timer, emergency && s.timerEmergency]}>{emergency ? <View style={s.emergencyBanner}><Ionicons name="warning" size={16} color={C.white} /><Text style={s.emergencyBannerText}>LAST CALL · EMERGENCY OUT</Text></View> : null}<Text style={s.timerLabel}>{emergency ? "TIME LEFT" : "SINCE WAKE"}</Text><Text style={s.timerValue}>{emergency ? (remaining >= 0 ? formatDuration(remaining) : `+${formatDuration(-remaining)}`) : formatDuration(elapsed)}</Text><View style={[s.countdown, emergency && s.urgent, remaining <= 0 && s.overdue]}><Text style={s.countdownLabel}>{emergency ? "MINIMUM ROUTINE" : "UNTIL OUT"}</Text>{emergency ? <View style={s.timerSteps}><Text style={s.timerStep}>세수</Text><Text style={s.timerStep}>옷</Text><Text style={s.timerStep}>가방</Text></View> : <Text style={s.countdownValue}>{remaining >= 0 ? formatDuration(remaining) : `+${formatDuration(-remaining)}`}</Text>}<Text style={s.coach}>{getCoachMessage(remaining)}</Text></View><View style={s.timeline}><Text style={s.timelineText}>WAKE {formatClock(Date.now() - elapsed * 1000)}</Text><View style={s.timelineLine} /><Text style={s.timelineText}>OUT {formatClock(plan.targetOutAt)}</Text></View><Pressable onPress={onOut} style={({ pressed }) => [s.out, pressed && s.pressed]}><Ionicons name="camera" size={28} /><Text style={s.outText}>I&apos;M OUT</Text></Pressable><Pressable onPress={onSkip} style={s.skip}><Text style={s.skipText}>OUT WITHOUT PHOTO</Text></Pressable></View>;
 }
 
 function Result({ record, previous, comparison, onDone }: { record: WakeToOutRecord; previous: WakeToOutRecord | null; comparison: number | null; onDone: () => void }) {

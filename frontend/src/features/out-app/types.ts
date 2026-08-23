@@ -5,6 +5,7 @@ export type MorningPlan = {
   travelMinutes: number;
   prepMinutes: number;
   wakeAt: number;
+  lastCallAt?: number;
   targetOutAt: number;
   adjustmentMinutes: number;
   repeatDays?: number[];
@@ -23,6 +24,7 @@ export type WakeToOutRecord = {
   aiComment?: string;
   aiCharacter?: CharacterId;
   aiCharacterName?: string;
+  departureMode?: "ready" | "last-call";
   authorUserId?: string;
   photoKey?: string;
 };
