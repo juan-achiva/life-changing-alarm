@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 import OutAlarmNative, { type NativeAlarmRequest } from "../../../modules/out-alarm-native";
 import type { MorningPlan } from "./types";
 
-export type AlarmOccurrence = { wakeAt: number; outAt: number };
+export type AlarmOccurrence = { wakeAt: number; lastCallAt: number; outAt: number };
 
 function nativeId(value: string) {
   let a = 0x811c9dc5; let b = 0x811c9dc5; let c = 0x811c9dc5; let d = 0x811c9dc5;
@@ -32,7 +32,7 @@ export async function scheduleNativeAlarmSet(
   for (const [index, occurrence] of occurrences.entries()) {
     const requests: NativeAlarmRequest[] = [
       { id: nativeId(`${plan.id}-${index}-wake-${occurrence.wakeAt}`), title: "기상할 시간이에요", body: `${plan.eventTitle} · 기상 완료를 누르면 측정이 시작됩니다.`, timestamp: occurrence.wakeAt, kind: "wake-alarm", planId: plan.id, ...options },
-      { id: nativeId(`${plan.id}-${index}-out-${occurrence.outAt}`), title: "OUT NOW — 출발할 시간이에요", body: "Wake-to-Out 목표 시간이 됐습니다. 지금 나가세요.", timestamp: occurrence.outAt, kind: "out-alarm", planId: plan.id, ...options },
+      { id: nativeId(`${plan.id}-${index}-last-call-${occurrence.lastCallAt}`), title: "LAST CALL", body: "10분 안에 집을 나가세요.", timestamp: occurrence.lastCallAt, kind: "last-call", planId: plan.id, ...options },
     ];
     for (const request of requests) await OutAlarmNative.schedule(request);
   }
@@ -41,4 +41,13 @@ export async function scheduleNativeAlarmSet(
 
 export async function cancelNativeAlarms() {
   if (OutAlarmNative) await OutAlarmNative.cancelAll();
+}
+
+export async function consumePendingNativeAlarm(planId: string) {
+  if (!OutAlarmNative || Platform.OS !== "ios") return null;
+  try {
+    return await OutAlarmNative.consumePendingAlarm(planId);
+  } catch {
+    return null;
+  }
 }
