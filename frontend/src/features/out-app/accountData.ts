@@ -5,6 +5,7 @@ import { collection, deleteDoc, doc, getDocs, writeBatch } from "firebase/firest
 import { auth, db } from "@/src/lib/firebase";
 import { deleteRemoteMedia } from "./feedSync";
 import { leaveOutGroup } from "./groups";
+import { cancelNativeAlarms } from "./nativeAlarm";
 import { clearOutLocalData } from "./storage";
 import { stopStopwatchSurface } from "./stopwatchSurface";
 import type { GroupProfile } from "./types";
@@ -29,6 +30,7 @@ export async function deleteAllUserData(group: GroupProfile | null) {
   await Promise.all([
     clearOutLocalData(),
     Notifications.cancelAllScheduledNotificationsAsync().catch(() => undefined),
+    cancelNativeAlarms().catch(() => undefined),
     stopStopwatchSurface(Date.now()).catch(() => undefined),
   ]);
 }

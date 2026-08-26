@@ -36,7 +36,7 @@ export type CustomCharacter = {
   personality: string;
 };
 
-export type AppPhase = "tomorrow" | "alarm" | "outAlarm" | "timer" | "result";
+export type AppPhase = "tomorrow" | "alarm" | "timer" | "result";
 
 export type GroupProfile = {
   id: string;

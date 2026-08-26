@@ -24,15 +24,21 @@ class OutAlarmActivity : Activity() {
     val data = runCatching { JSONObject(intent.getStringExtra("alarm") ?: "{}") }.getOrElse { JSONObject() }
     val pad = (32 * resources.displayMetrics.density).toInt()
     val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(pad, pad, pad, pad); setBackgroundColor(Color.rgb(17, 17, 17)) }
-    layout.addView(TextView(this).apply { text = if (data.optString("kind") == "out-alarm") "OUT NOW" else "WAKE UP"; textSize = 22f; setTextColor(Color.rgb(217, 255, 67)); gravity = Gravity.CENTER })
+    val kind = data.optString("kind")
+    layout.addView(TextView(this).apply { text = when (kind) { "out-alarm" -> "OUT NOW"; "last-call" -> "LAST CALL"; else -> "WAKE UP" }; textSize = 22f; setTextColor(Color.rgb(217, 255, 67)); gravity = Gravity.CENTER })
     layout.addView(TextView(this).apply { text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); textSize = 76f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, pad, 0, pad) })
     layout.addView(TextView(this).apply { text = data.optString("title", "기상할 시간이에요"); textSize = 24f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
-    layout.addView(Button(this).apply { text = if (data.optString("kind") == "out-alarm") "출발 알람 끄기" else "기상 완료"; textSize = 20f; setOnClickListener { stopAlarm(data) }; setPadding(pad, pad / 2, pad, pad / 2) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = pad * 2 })
+    layout.addView(Button(this).apply { text = if (kind == "wake-alarm") "기상 완료" else "알람 끄기"; textSize = 20f; setOnClickListener { stopAlarm(data) }; setPadding(pad, pad / 2, pad, pad / 2) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = pad * 2 })
     setContentView(layout)
   }
 
   private fun stopAlarm(data: JSONObject) {
     stopService(Intent(this, OutAlarmRingingService::class.java))
+    getSharedPreferences("out-alarm-state", MODE_PRIVATE).edit()
+      .putLong("pendingTimestamp", System.currentTimeMillis())
+      .putString("pendingKind", data.optString("kind", "wake-alarm"))
+      .putString("pendingPlanId", data.optString("planId"))
+      .apply()
     packageManager.getLaunchIntentForPackage(packageName)?.let { launch -> launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP); launch.putExtra("outAlarmStopped", true); launch.putExtra("kind", data.optString("kind")); launch.putExtra("planId", data.optString("planId")); startActivity(launch) }
     finish()
   }

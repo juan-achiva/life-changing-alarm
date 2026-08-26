@@ -1,9 +1,24 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 
 import OutAlarmNative, { type NativeAlarmRequest } from "../../../modules/out-alarm-native";
 import type { MorningPlan } from "./types";
 
 export type AlarmOccurrence = { wakeAt: number; lastCallAt: number; outAt: number };
+const NATIVE_ALARM_IDS_KEY = "out.native-alarm-ids.v1";
+
+function shiftedRepeatDays(days: number[], wakeAt: number, eventAt: number) {
+  if (!days.length) return [];
+  const wake = new Date(wakeAt); wake.setHours(0, 0, 0, 0);
+  const event = new Date(eventAt); event.setHours(0, 0, 0, 0);
+  const offset = Math.round((event.getTime() - wake.getTime()) / 86_400_000);
+  return days.map((day) => (day + offset + 7) % 7);
+}
+
+function localTime(timestamp: number) {
+  const date = new Date(timestamp);
+  return { localHour: date.getHours(), localMinute: date.getMinutes() };
+}
 
 function nativeId(value: string) {
   let a = 0x811c9dc5; let b = 0x811c9dc5; let c = 0x811c9dc5; let d = 0x811c9dc5;
@@ -28,25 +43,60 @@ export async function scheduleNativeAlarmSet(
     await OutAlarmNative.openExactAlarmSettings();
     return { handled: true as const, ok: false as const, error: "정확한 알람 권한을 켠 뒤 다시 저장해 주세요." };
   }
-  await OutAlarmNative.cancelAll();
-  for (const [index, occurrence] of occurrences.entries()) {
+  const repeatDays = plan.repeatDays ?? [];
+  const nativeOccurrences = repeatDays.length ? occurrences.slice(0, 1) : occurrences;
+  const storedIds = await AsyncStorage.getItem(NATIVE_ALARM_IDS_KEY);
+  const previousIds = storedIds ? JSON.parse(storedIds) as string[] : [];
+  if (!storedIds) await OutAlarmNative.cancelAll();
+  const scheduledIds: string[] = [];
+  for (const [index, occurrence] of nativeOccurrences.entries()) {
     const requests: NativeAlarmRequest[] = [
-      { id: nativeId(`${plan.id}-${index}-wake-${occurrence.wakeAt}`), title: "기상할 시간이에요", body: `${plan.eventTitle} · 기상 완료를 누르면 측정이 시작됩니다.`, timestamp: occurrence.wakeAt, kind: "wake-alarm", planId: plan.id, ...options },
-      { id: nativeId(`${plan.id}-${index}-last-call-${occurrence.lastCallAt}`), title: "LAST CALL", body: "10분 안에 집을 나가세요.", timestamp: occurrence.lastCallAt, kind: "last-call", planId: plan.id, ...options },
+      { id: nativeId(`${plan.id}-${index}-wake-${occurrence.wakeAt}`), title: "기상할 시간이에요", body: `${plan.eventTitle} · 기상 완료를 누르면 측정이 시작됩니다.`, timestamp: occurrence.wakeAt, kind: "wake-alarm", planId: plan.id, repeatDays, ...localTime(occurrence.wakeAt), ...options },
+      { id: nativeId(`${plan.id}-${index}-last-call-${occurrence.lastCallAt}`), title: "LAST CALL", body: "10분 안에 집을 나가세요.", timestamp: occurrence.lastCallAt, kind: "last-call", planId: plan.id, repeatDays: shiftedRepeatDays(repeatDays, occurrence.wakeAt, occurrence.lastCallAt), ...localTime(occurrence.lastCallAt), ...options },
+      { id: nativeId(`${plan.id}-${index}-out-${occurrence.outAt}`), title: "OUT NOW", body: "목표 출발 시간입니다. 지금 집을 나가세요.", timestamp: occurrence.outAt, kind: "out-alarm", planId: plan.id, repeatDays: shiftedRepeatDays(repeatDays, occurrence.wakeAt, occurrence.outAt), ...localTime(occurrence.outAt), ...options },
     ];
-    for (const request of requests) await OutAlarmNative.schedule(request);
+    try {
+      for (const request of requests) {
+        await OutAlarmNative.schedule(request);
+        scheduledIds.push(request.id);
+      }
+    } catch (error) {
+      await OutAlarmNative.cancel(scheduledIds).catch(() => undefined);
+      throw error;
+    }
   }
+  await OutAlarmNative.cancel(previousIds.filter((id) => !scheduledIds.includes(id)));
+  await AsyncStorage.setItem(NATIVE_ALARM_IDS_KEY, JSON.stringify(scheduledIds));
   return { handled: true as const, ok: true as const, mode: "native" as const };
 }
 
 export async function cancelNativeAlarms() {
   if (OutAlarmNative) await OutAlarmNative.cancelAll();
+  await AsyncStorage.removeItem(NATIVE_ALARM_IDS_KEY);
 }
 
-export async function consumePendingNativeAlarm(planId: string) {
-  if (!OutAlarmNative || Platform.OS !== "ios") return null;
+export async function scheduleNativeSnooze(plan: MorningPlan, timestamp: number, options: { soundEnabled: boolean; vibrationEnabled: boolean }) {
+  if (!OutAlarmNative || Platform.OS === "web" || !(await OutAlarmNative.isSupported()) || !options.soundEnabled) return false;
+  const authorization = await OutAlarmNative.requestAuthorization();
+  if (authorization !== "authorized" || !(await OutAlarmNative.canScheduleExactAlarms())) return false;
+  await OutAlarmNative.schedule({
+    id: nativeId(`${plan.id}-snooze-${timestamp}`),
+    title: "다시 일어날 시간이에요",
+    body: "5분 다시 알림이 끝났습니다.",
+    timestamp,
+    kind: "wake-alarm",
+    planId: plan.id,
+    repeatDays: [],
+    ...localTime(timestamp),
+    ...options,
+  });
+  return true;
+}
+
+export async function consumePendingNativeAlarm() {
+  if (!OutAlarmNative || Platform.OS === "web") return null;
   try {
-    return await OutAlarmNative.consumePendingAlarm(planId);
+    return await OutAlarmNative.consumePendingAlarm();
   } catch {
     return null;
   }

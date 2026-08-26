@@ -10,7 +10,11 @@
     <receiver android:name=".OutAlarmReceiver" android:exported="false" />
     <receiver android:name=".OutAlarmStopReceiver" android:exported="false" />
     <receiver android:name=".OutAlarmBootReceiver" android:exported="false">
-      <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.TIME_SET" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+      </intent-filter>
     </receiver>
     <service android:name=".OutAlarmRingingService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
     <activity android:name=".OutAlarmActivity" android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:showOnLockScreen="true" android:turnScreenOn="true" android:theme="@style/OutAlarmTheme" />
