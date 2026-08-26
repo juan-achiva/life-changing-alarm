@@ -16,11 +16,28 @@ service cloud.firestore {
         && request.resource.data.memberUserIds == [request.auth.uid]
         && request.resource.data.maxMembers == 7;
 
-      // Temporary compatibility with the previous shipped client.
-      allow read: if signedIn();
+      // A code is the document ID, so signed-in users may fetch only the exact
+      // group they were invited to. Collection discovery is never allowed.
+      allow get: if signedIn();
+      allow list: if false;
 
       allow update: if signedIn()
-        && (myGroupId() == groupId || myGroupId() == null)
+        && (
+          myGroupId() == groupId
+          || (
+            myGroupId() == null
+            && !resource.data.memberUserIds.hasAny([request.auth.uid])
+            && request.resource.data.memberUserIds.hasAny([request.auth.uid])
+            && request.resource.data.memberUserIds.size() == resource.data.memberUserIds.size() + 1
+            && request.resource.data.memberUserIds.hasAll(resource.data.memberUserIds)
+            && request.resource.data.memberProfiles.size() == resource.data.memberProfiles.size() + 1
+            && request.resource.data.memberProfiles.hasAll(resource.data.memberProfiles)
+            && request.resource.data.memberNames.size() == resource.data.memberNames.size() + 1
+            && request.resource.data.memberNames.hasAll(resource.data.memberNames)
+            && request.resource.data.memberCount == resource.data.memberCount + 1
+            && request.resource.data.ownerUserId == resource.data.ownerUserId
+          )
+        )
         && request.resource.data.inviteCode == resource.data.inviteCode
         && request.resource.data.maxMembers == resource.data.maxMembers
         && request.resource.data.memberUserIds.size() == request.resource.data.memberCount

@@ -16,6 +16,12 @@ type OutGroupDocument = {
   memberUserIds?: string[];
 };
 
+const groupApiBaseUrl = (
+  process.env.EXPO_PUBLIC_MEDIA_URL
+  ?? process.env.EXPO_PUBLIC_AI_FEEDBACK_URL?.replace(/\/feedback\/?$/, "")
+  ?? process.env.EXPO_PUBLIC_AI_RECOMMENDATION_URL?.replace(/\/(recommend|feedback)\/?$/, "")
+)?.replace(/\/$/, "");
+
 export async function createOutGroup(groupName: string, memberName: string): Promise<GroupProfile> {
   ensureFirebase();
   const user = await getAnonymousUser(memberName);
@@ -34,23 +40,17 @@ export async function joinOutGroup(inviteCode: string, memberName: string): Prom
   ensureFirebase();
   const user = await getAnonymousUser(memberName);
   const code = normalizeInviteCode(inviteCode);
-  const groupRef = doc(db!, "groups", code);
-  const direct = await getDoc(groupRef);
-  if (!direct.exists()) throw new Error("존재하지 않는 초대 코드예요.");
-
-  await runTransaction(db!, async (transaction) => {
-    const groupSnapshot = await transaction.get(groupRef);
-    if (!groupSnapshot.exists()) throw new Error("그룹을 찾지 못했어요.");
-    const group = groupSnapshot.data() as OutGroupDocument;
-    if (group.memberCount >= group.maxMembers) throw new Error("그룹 인원이 가득 찼어요.");
-    const existingProfiles = group.memberProfiles ?? [];
-    if (existingProfiles.some((member) => member.userId === user.uid)) return;
-    const memberProfiles = [...existingProfiles, { userId: user.uid, displayName: memberName }];
-    transaction.update(groupRef, { memberCount: memberProfiles.length, memberNames: memberProfiles.map((member) => member.displayName), memberProfiles, memberUserIds: memberProfiles.map((member) => member.userId), updatedAt: serverTimestamp() });
-    transaction.set(doc(db!, "users", user.uid), { groupId: groupRef.id, groupName: group.name, role: "member", updatedAt: serverTimestamp() }, { merge: true });
+  if (!/^[A-Z0-9]{8}$/.test(code)) throw new Error("8자리 초대 코드를 확인해 주세요.");
+  if (!groupApiBaseUrl) throw new Error("그룹 가입 서버 주소가 설정되지 않았어요.");
+  const idToken = await user.getIdToken();
+  const response = await fetch(`${groupApiBaseUrl}/groups/join`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ inviteCode: code, memberName: memberName.trim() }),
   });
-  const data = direct.data() as OutGroupDocument;
-  return { id: groupRef.id, name: data.name, inviteCode: data.inviteCode, memberName, memberNames: [...(data.memberNames ?? []), memberName] };
+  const result = await response.json() as GroupProfile & { error?: string };
+  if (!response.ok || !result.id) throw new Error(result.error ?? "그룹 가입을 처리하지 못했어요.");
+  return result;
 }
 
 export async function leaveOutGroup(profile: GroupProfile) {

@@ -16,6 +16,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
     if (request.method === "POST" && url.pathname === "/feedback") return createFeedback(request, env);
+    if (request.method === "POST" && url.pathname === "/groups/join") return joinGroup(request, env);
     if (request.method === "POST" && url.pathname === "/photos") return uploadPhoto(request, url, env);
     if (request.method === "POST" && url.pathname === "/push/register") return registerPushToken(request, env);
     if (request.method === "POST" && url.pathname === "/push/group-post") return sendGroupPostPush(request, env);
@@ -27,6 +28,133 @@ export default {
     return json({ error: "Not found" }, 404);
   },
 };
+
+type FirestoreValue = {
+  stringValue?: string;
+  integerValue?: string;
+  timestampValue?: string;
+  arrayValue?: { values?: FirestoreValue[] };
+  mapValue?: { fields?: Record<string, FirestoreValue> };
+};
+
+type FirestoreDocument = {
+  name?: string;
+  updateTime?: string;
+  fields?: Record<string, FirestoreValue>;
+};
+
+async function joinGroup(request: Request, env: Env): Promise<Response> {
+  const userId = await verifyFirebaseUser(request, env);
+  if (!userId) return json({ error: "서버 사용자 인증이 필요해요." }, 401);
+  const body = await readJoinGroupBody(request);
+  if (!body) return json({ error: "이름과 8자리 초대 코드를 확인해 주세요." }, 400);
+  const authorization = request.headers.get("authorization") ?? "";
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const group = await fetchFirestoreDocument(env, `groups/${body.inviteCode}`, authorization);
+    if (!group?.name || !group.updateTime || !group.fields) return json({ error: "존재하지 않는 초대 코드예요." }, 404);
+    const memberUserIds = firestoreStringArray(group, "memberUserIds");
+    const memberProfiles = firestoreMemberProfiles(group);
+    const existingMember = memberProfiles.find((member) => member.userId === userId);
+    if (existingMember) {
+      const role = firestoreString(group, "ownerUserId") === userId ? "owner" : "member";
+      const repaired = await updateUserMembership(env, authorization, userId, body.inviteCode, firestoreString(group, "name"), role);
+      if (!repaired) return json({ error: "사용자 그룹 정보를 복구하지 못했어요." }, 502);
+      return json(groupProfile(group, existingMember.displayName), 200);
+    }
+    const maxMembers = firestoreInteger(group, "maxMembers") || 7;
+    if (memberUserIds.length >= maxMembers) return json({ error: "그룹 인원이 가득 찼어요." }, 409);
+
+    const nextProfiles = [...memberProfiles, { userId, displayName: body.memberName }];
+    const now = new Date().toISOString();
+    const groupFields: Record<string, FirestoreValue> = {
+      ...group.fields,
+      memberCount: { integerValue: String(nextProfiles.length) },
+      memberNames: { arrayValue: { values: nextProfiles.map((member) => ({ stringValue: member.displayName })) } },
+      memberUserIds: { arrayValue: { values: nextProfiles.map((member) => ({ stringValue: member.userId })) } },
+      memberProfiles: { arrayValue: { values: nextProfiles.map((member) => ({ mapValue: { fields: { userId: { stringValue: member.userId }, displayName: { stringValue: member.displayName } } } })) } },
+      updatedAt: { timestampValue: now },
+    };
+    const commit = await fetch(firestoreCommitUrl(env), {
+      method: "POST",
+      headers: { Authorization: authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({ writes: [
+        { update: { name: group.name, fields: groupFields }, currentDocument: { updateTime: group.updateTime } },
+        {
+          update: {
+            name: firestoreDocumentName(env, `users/${userId}`),
+            fields: { groupId: { stringValue: body.inviteCode }, groupName: { stringValue: firestoreString(group, "name") }, role: { stringValue: "member" }, updatedAt: { timestampValue: now } },
+          },
+          updateMask: { fieldPaths: ["groupId", "groupName", "role", "updatedAt"] },
+          currentDocument: { exists: true },
+        },
+      ] }),
+    });
+    if (commit.ok) return json(groupProfile({ ...group, fields: groupFields }, body.memberName));
+    if (commit.status === 409 || commit.status === 412) continue;
+    console.error("Group join commit failed", { status: commit.status, code: body.inviteCode, userId });
+    return json({ error: "그룹 가입을 처리하지 못했어요. 잠시 후 다시 시도해 주세요." }, 502);
+  }
+  return json({ error: "동시에 가입 요청이 많아요. 다시 한 번 눌러 주세요." }, 409);
+}
+
+async function readJoinGroupBody(request: Request) {
+  try {
+    const value = await request.json<{ inviteCode?: unknown; memberName?: unknown }>();
+    const inviteCode = typeof value.inviteCode === "string" ? value.inviteCode.trim().toUpperCase() : "";
+    const memberName = typeof value.memberName === "string" ? value.memberName.trim().slice(0, 24) : "";
+    return /^[A-Z0-9]{8}$/.test(inviteCode) && memberName ? { inviteCode, memberName } : null;
+  } catch {
+    return null;
+  }
+}
+
+function firestoreMemberProfiles(document: FirestoreDocument) {
+  return document.fields?.memberProfiles?.arrayValue?.values?.flatMap((value) => {
+    const fields = value.mapValue?.fields;
+    const userId = fields?.userId?.stringValue;
+    const displayName = fields?.displayName?.stringValue;
+    return userId && displayName ? [{ userId, displayName }] : [];
+  }) ?? [];
+}
+
+function groupProfile(document: FirestoreDocument, memberName: string) {
+  return {
+    id: firestoreString(document, "inviteCode"),
+    name: firestoreString(document, "name"),
+    inviteCode: firestoreString(document, "inviteCode"),
+    memberName,
+    memberNames: firestoreMemberProfiles(document).map((member) => member.displayName),
+  };
+}
+
+function firestoreInteger(document: FirestoreDocument, field: string) {
+  return Number(document.fields?.[field]?.integerValue ?? 0);
+}
+
+async function updateUserMembership(env: Env, authorization: string, userId: string, groupId: string, groupName: string, role: "owner" | "member") {
+  const response = await fetch(firestoreCommitUrl(env), {
+    method: "POST",
+    headers: { Authorization: authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ writes: [{
+      update: {
+        name: firestoreDocumentName(env, `users/${userId}`),
+        fields: { groupId: { stringValue: groupId }, groupName: { stringValue: groupName }, role: { stringValue: role }, updatedAt: { timestampValue: new Date().toISOString() } },
+      },
+      updateMask: { fieldPaths: ["groupId", "groupName", "role", "updatedAt"] },
+      currentDocument: { exists: true },
+    }] }),
+  });
+  return response.ok;
+}
+
+function firestoreDocumentName(env: Env, path: string) {
+  return `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}`;
+}
+
+function firestoreCommitUrl(env: Env) {
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents:commit`;
+}
 
 async function uploadPhoto(request: Request, url: URL, env: Env): Promise<Response> {
   const userId = await verifyFirebaseUser(request, env);
@@ -128,8 +256,6 @@ async function readPostPushBody(request: Request) {
     return typeof value.groupId === "string" && typeof value.postId === "string" ? { groupId: value.groupId, postId: value.postId } : null;
   } catch { return null; }
 }
-
-type FirestoreDocument = { fields?: Record<string, { stringValue?: string; arrayValue?: { values?: { stringValue?: string }[] } }> };
 
 async function fetchFirestoreDocument(env: Env, path: string, authorization: string) {
   if (!env.FIREBASE_PROJECT_ID || !authorization) return null;
